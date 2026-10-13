@@ -16,7 +16,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #12151b;
     --card: #1b1f27;
     --fg: #e6e8ec;
@@ -34,6 +34,23 @@
     color-scheme: dark;
   }
 }
+:root[data-theme="dark"] {
+  --bg: #12151b;
+  --card: #1b1f27;
+  --fg: #e6e8ec;
+  --muted: #9aa3b2;
+  --line: #2c323d;
+  --accent: #6d95ff;
+  --accent-fg: #0b1020;
+  --ok: #4cc27a;
+  --warn: #e7a54a;
+  --bad: #ff6b6f;
+  --bad-bg: #3a1d20;
+  --warn-bg: #3a2c16;
+  --ok-bg: #173523;
+  --chip: #262b35;
+  color-scheme: dark;
+}
 
 * { box-sizing: border-box; }
 body {
@@ -42,7 +59,7 @@ body {
   color: var(--fg);
   font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
-.app { max-width: 1280px; margin: 0 auto; padding: 20px 16px 40px; }
+.app { max-width: 1280px; margin: 0 auto; }
 .top h1 { margin: 0; font-size: 24px; }
 .sub { margin: 4px 0 16px; color: var(--muted); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
@@ -131,3 +148,9 @@ tr.row-bad td { background: var(--bad-bg); }
 .actions > div { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
 .actions p { margin: 0; }
 .foot { margin-top: 24px; color: var(--muted); font-size: 12px; }
+
+.sample-note { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--fg); }
+.upload > button.link { margin-top: 10px; }
+.status { margin: 0 0 8px; font-weight: 600; }
+button:focus-visible, input:focus-visible, select:focus-visible, .drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.app { padding-inline: 16px; padding-block: 20px 40px; }

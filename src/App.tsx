@@ -9,6 +9,14 @@ import { SheetMapper } from './components/SheetMapper';
 import { HsnReview } from './components/HsnReview';
 import { IssuesPanel } from './components/IssuesPanel';
 import { OutputPreview } from './components/OutputPreview';
+import { SUPPLIER_GSTIN, sampleSheets } from '../scripts/sample-data.mjs';
+
+const SAMPLE_NAME = 'glowsis-sample.xlsx';
+
+function sampleFile() {
+  const grids = sampleSheets as unknown as Record<string, Grid>;
+  return { name: SAMPLE_NAME, grids, sample: true };
+}
 
 type Tab = 'sheets' | 'hsn' | 'issues' | 'output';
 
@@ -26,8 +34,11 @@ function initialMaster() {
 export default function App() {
   const [settings, setSettingsState] = useState<Settings>(() => load('rekon.settings', DEFAULT_SETTINGS));
   const [master, setMaster] = useState(initialMaster);
-  const [file, setFile] = useState<{ name: string; grids: Record<string, Grid> } | null>(null);
-  const [mappings, setMappings] = useState<SheetMapping[]>([]);
+  // Opens with the bundled sample so the page shows what it does; loading a real export replaces it.
+  const [file, setFile] = useState<{ name: string; grids: Record<string, Grid>; sample?: boolean } | null>(sampleFile);
+  const [mappings, setMappings] = useState<SheetMapping[]>(() =>
+    Object.entries(sampleFile().grids).map(([n, g]) => detectSheet(n, g)),
+  );
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [tab, setTab] = useState<Tab>('sheets');
   const [error, setError] = useState('');
@@ -38,10 +49,24 @@ export default function App() {
     save('rekon.settings', s);
   };
 
-  const result = useMemo(
-    () => (file ? buildReturn(file.grids, mappings, settings, master, overrides) : null),
-    [file, mappings, settings, master, overrides],
+  // The sample belongs to a made-up Kerala supplier; use its GSTIN unless the user entered their own.
+  const effective = useMemo(
+    () => (file?.sample && !settings.gstin ? { ...settings, gstin: SUPPLIER_GSTIN, period: settings.period || '2026-09' } : settings),
+    [file, settings],
   );
+
+  const result = useMemo(
+    () => (file ? buildReturn(file.grids, mappings, effective, master, overrides) : null),
+    [file, mappings, effective, master, overrides],
+  );
+
+  function loadSample() {
+    const f = sampleFile();
+    setFile(f);
+    setMappings(Object.entries(f.grids).map(([n, g]) => detectSheet(n, g)));
+    setOverrides({});
+    setTab('sheets');
+  }
 
   async function onFile(f: File) {
     setBusy(true);
@@ -86,7 +111,7 @@ export default function App() {
     : null;
 
   const baseName = (file?.name ?? 'gstr1').replace(/\.[^.]+$/, '');
-  const periodTag = settings.period ? `_${settings.period.replace('-', '')}` : '';
+  const periodTag = effective.period ? `_${effective.period.replace('-', '')}` : '';
 
   return (
     <div className="app">
@@ -116,9 +141,19 @@ export default function App() {
               if (f) onFile(f);
             }}
           />
-          <strong>{file ? file.name : 'Choose the Glowsis GST export (.xlsx / .xls)'}</strong>
-          <span>{file ? `${mappings.length} sheets · click to load another file` : 'All 8 sheets are read and recognised automatically'}</span>
+          <strong>{file && !file.sample ? file.name : 'Choose the Glowsis GST export (.xlsx / .xls)'}</strong>
+          <span>
+            {file && !file.sample ? `${mappings.length} sheets · click to load another file` : 'All sheets are read and recognised automatically'}
+          </span>
         </label>
+        {file?.sample ? (
+          <p className="sample-note">
+            <strong>Showing sample data.</strong> This is a made-up Glowsis export (supplier {SUPPLIER_GSTIN}, September 2026) so you
+            can see every step. Choose your own export above to replace it.
+          </p>
+        ) : (
+          <button className="link" onClick={loadSample}>Load the sample export</button>
+        )}
         {error && <p className="err">{error}</p>}
       </section>
 
@@ -147,7 +182,7 @@ export default function App() {
             <HsnReview
               hsn={result.hsn}
               master={master}
-              minDigits={settings.minHsnDigits}
+              minDigits={effective.minHsnDigits}
               overrides={overrides}
               onOverride={(key, code) => setOverrides((o) => {
                 const next = { ...o };

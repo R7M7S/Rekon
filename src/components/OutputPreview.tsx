@@ -5,13 +5,15 @@ import type { Result } from '../lib/transform';
 interface Props {
   result: Result;
   errors: number;
-  onDownloadReturn: () => void;
-  onDownloadAudit: () => void;
+  onDownloadReturn: () => Promise<string>;
+  onDownloadAudit: () => Promise<string>;
 }
 
 export function OutputPreview({ result, errors, onDownloadReturn, onDownloadAudit }: Props) {
   const keys = Object.keys(OUTPUT_SHEETS).filter((k) => result.sheets[k]?.length);
   const [sel, setSel] = useState(keys[0] ?? '');
+  const [status, setStatus] = useState('');
+  const run = async (fn: () => Promise<string>) => setStatus(await fn());
   const active = keys.includes(sel) ? sel : keys[0];
   const def = active ? OUTPUT_SHEETS[active] : null;
   const rows = active ? result.sheets[active] : [];
@@ -20,9 +22,10 @@ export function OutputPreview({ result, errors, onDownloadReturn, onDownloadAudi
     <div className="stack">
       <section className="card actions">
         <div>
-          <button className="primary" onClick={onDownloadReturn}>Download GSTR-1 workbook</button>
-          <button onClick={onDownloadAudit}>Download audit report</button>
+          <button className="primary" onClick={() => run(onDownloadReturn)}>Download GSTR-1 workbook</button>
+          <button onClick={() => run(onDownloadAudit)}>Download audit report</button>
         </div>
+        {status && <p className="status" role="status">{status}</p>}
         {errors > 0 ? (
           <p className="err">
             {errors} error(s) remain — the offline tool will reject those rows. Fix them in Glowsis or in the Validation tab first.

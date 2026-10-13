@@ -79,6 +79,33 @@ function add(wb: XLSX.WorkBook, name: string, aoa: (string | number)[][]) {
   XLSX.utils.book_append_sheet(wb, ws, name);
 }
 
-export function download(wb: XLSX.WorkBook, filename: string) {
+interface DownloadsApi {
+  save(req: { filename: string; data: ArrayBuffer }): Promise<{ status: string }>;
+}
+type ClaudeWindow = { claude?: { use(name: string): Promise<unknown> } };
+
+/**
+ * Saves a workbook. Inside the claude.ai artifact viewer, browser downloads are
+ * blocked, so the viewer's `downloads` capability is used; elsewhere (the
+ * standalone HTML file, dev server) a normal browser download is started.
+ * Resolves with a short status message for the UI.
+ */
+export async function download(wb: XLSX.WorkBook, filename: string): Promise<string> {
+  const host = (window as unknown as ClaudeWindow).claude;
+  if (host?.use) {
+    const api = (await host.use('downloads').catch(() => null)) as DownloadsApi | null;
+    if (!api) return 'Saving files is not available in this view. Open the standalone HTML file instead.';
+    const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true }) as ArrayBuffer;
+    try {
+      await api.save({ filename, data });
+      return `Saved ${filename}`;
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code === 'declined') return 'Save cancelled.';
+      if (code === 'rate_limited') return 'A save prompt is already open. Finish it, then try again.';
+      return `Could not save ${filename} (${code ?? 'unavailable'}).`;
+    }
+  }
   XLSX.writeFile(wb, filename, { compression: true });
+  return `Downloaded ${filename}`;
 }
