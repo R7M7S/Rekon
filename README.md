@@ -35,7 +35,20 @@ Everything runs in the browser. Your GST data is never uploaded anywhere.
 5. **Validates and reconciles.** It lists errors (things the offline tool will reject) and warnings, and
    logs every change it made with the source row (e.g. `B2B!R14`). It also compares invoice totals
    with the HSN summary.
-6. **Downloads**:
+6. **Glowsis specifics** (from a real `GSTR1` export):
+   - **Sheets:** `Sales B2B`, `Sales B2C`, `HSN B2B`, `HSN B2C` and `GST DOC` are recognised. `GST R3` (the 3B summary)
+     is ignored, and `GST Nill` is used only to check Table 8.
+   - **Invoice values:** Glowsis gives each line's value in `InvoiceValue`, so a line-level invoice's value is the
+     sum of its lines.
+   - **0% lines:** 0% lines are reported as nil-rated supplies in Table 8 instead of B2B/B2CS. You can turn this off
+     in Settings. If `GST Nill` is larger than the 0% lines, Settings lets you choose which Table 8 row gets the
+     difference.
+   - **Units and marker rows:** HSN rows without a unit are reported as `OTH-OTHERS` with one summary warning.
+     Empty document rows and `Last row` markers are skipped.
+7. **Downloads**:
+   - `GSTR1_<GSTIN>_<MMYYYY>.json`: upload it at GST portal → Returns → GSTR-1 → Prepare Offline → Upload. It needs
+     your GSTIN and the return period in Settings. If the portal asks for a newer schema version, change
+     `JSON_VERSION` in `src/lib/gstJson.ts`;
    - `…_GSTR1.xlsx`: sheet names and column headers follow the offline tool template (`b2b,sez,de`,
      `b2cl`, `b2cs`, `cdnr`, `cdnur`, `exp`, `exemp`, `hsn(b2b)`, `hsn(b2c)`, `docs`). Headers are on
      row 4 and data starts on row 5;
@@ -55,7 +68,8 @@ Workflow: enter your GSTIN, return period and turnover band → choose the Glows
 **Sheets** and **HSN check** tabs → clear any **Validation** errors → download → in the offline tool,
 use *Import Files → Import Excel*, validate, and generate the JSON for upload.
 
-Try it with `samples/glowsis-sample.xlsx` (supplier GSTIN `32AABCR1234K1ZQ`, period 2026-09).
+Try it with `samples/glowsis-sample.xlsx`, which has the Glowsis layout with invented figures (supplier GSTIN
+`32AABCR1234K1ZQ`, period 2026-08). `samples/generic-sample.xlsx` uses differently named columns.
 
 ## HSN master
 

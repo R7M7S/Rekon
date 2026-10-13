@@ -14,7 +14,8 @@ export type SectionId =
   | 'hsn'
   | 'hsn_b2b'
   | 'hsn_b2c'
-  | 'docs';
+  | 'docs'
+  | 'nil_total';
 
 export interface FieldDef {
   key: string;
@@ -107,7 +108,7 @@ export const SECTIONS: SectionDef[] = [
   {
     id: 'cdnr',
     title: 'Credit/Debit notes – registered (9B)',
-    sheetNames: ['cdnr', 'cdnregistered', 'creditdebitnotesregistered'],
+    sheetNames: ['cdnr', 'cdnregistered', 'creditdebitnotesregistered', 'creditnoteb2b', 'debitnoteb2b', 'creditnote', 'debitnote'],
     fields: [
       GSTIN,
       NAME,
@@ -125,7 +126,7 @@ export const SECTIONS: SectionDef[] = [
   {
     id: 'cdnur',
     title: 'Credit/Debit notes – unregistered (9B)',
-    sheetNames: ['cdnur', 'cdnunregistered', 'creditdebitnotesunregistered'],
+    sheetNames: ['cdnur', 'cdnunregistered', 'creditdebitnotesunregistered', 'creditnoteb2c', 'debitnoteb2c'],
     fields: [
       f('ur_type', 'UR Type', ['urtype', 'typ', 'unregisteredtype', 'supplytype']),
       ...NOTE_FIELDS,
@@ -175,6 +176,15 @@ export const SECTIONS: SectionDef[] = [
       f('nil', 'Nil Rated Supplies', ['nilratedsupplies', 'nilrated', 'nil', 'nilamt']),
       f('expt', 'Exempted(other than nil rated/non GST supply)', ['exemptedotherthannilratednongstsupply', 'exempted', 'exempt', 'exemptedsupplies', 'exptamt']),
       f('ngsup', 'Non-GST Supplies', ['nongstsupplies', 'nongst', 'ngsupamt', 'nongstsupply']),
+    ],
+  },
+  {
+    id: 'nil_total',
+    title: 'Nil-rated total from ERP (check only)',
+    sheetNames: ['gstnill', 'gstnil', 'nill', 'niltotal'],
+    fields: [
+      f('desc', 'Nature of supplies', ['natureofsupplies', 'natureofsupply'], true),
+      f('txval', 'Total taxable value', ['totaltaxablevalue', 'taxablevalue'], true),
     ],
   },
   { id: 'hsn', title: 'HSN summary (12) – not split', sheetNames: ['hsn', 'hsnsummary', 'hsnsac', 'hsnwise'], fields: HSN_FIELDS },

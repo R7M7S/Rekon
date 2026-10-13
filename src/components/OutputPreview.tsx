@@ -7,9 +7,11 @@ interface Props {
   errors: number;
   onDownloadReturn: () => Promise<string>;
   onDownloadAudit: () => Promise<string>;
+  onDownloadJson: () => Promise<string>;
+  jsonBlockers: string[];
 }
 
-export function OutputPreview({ result, errors, onDownloadReturn, onDownloadAudit }: Props) {
+export function OutputPreview({ result, errors, onDownloadReturn, onDownloadAudit, onDownloadJson, jsonBlockers }: Props) {
   const keys = Object.keys(OUTPUT_SHEETS).filter((k) => result.sheets[k]?.length);
   const [sel, setSel] = useState(keys[0] ?? '');
   const [status, setStatus] = useState('');
@@ -22,16 +24,24 @@ export function OutputPreview({ result, errors, onDownloadReturn, onDownloadAudi
     <div className="stack">
       <section className="card actions">
         <div>
-          <button className="primary" onClick={() => run(onDownloadReturn)}>Download GSTR-1 workbook</button>
+          <button className="primary" disabled={jsonBlockers.length > 0} onClick={() => run(onDownloadJson)}>
+            Download JSON for GST portal
+          </button>
+          <button onClick={() => run(onDownloadReturn)}>Download offline-tool Excel</button>
           <button onClick={() => run(onDownloadAudit)}>Download audit report</button>
         </div>
+        {jsonBlockers.length > 0 && <p className="err">To create the JSON: {jsonBlockers.join(' ')}</p>}
+        <p className="hint small">
+          Upload the JSON at GST portal → Returns → GSTR-1 → Prepare Offline → Upload. If the portal rejects it, import the
+          offline-tool Excel into the GST Offline Tool and generate the JSON there.
+        </p>
         {status && <p className="status" role="status">{status}</p>}
         {errors > 0 ? (
           <p className="err">
             {errors} error(s) remain — the offline tool will reject those rows. Fix them in Glowsis or in the Validation tab first.
           </p>
         ) : (
-          <p className="ok">No blocking errors. Import the workbook in the GSTR-1 offline tool → validate → generate JSON.</p>
+          <p className="ok">No blocking errors.</p>
         )}
       </section>
 

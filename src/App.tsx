@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { type Grid, type SheetMapping, detectSheet } from './lib/detect';
-import { buildAuditWorkbook, buildReturnWorkbook, download, readHsnMasterFile, readWorkbook } from './lib/excel';
+import { buildAuditWorkbook, buildReturnWorkbook, download, downloadJson, readHsnMasterFile, readWorkbook } from './lib/excel';
+import { buildGstr1Json } from './lib/gstJson';
 import { HsnMaster } from './lib/hsn';
 import { load, loadRaw, remove, save } from './lib/storage';
 import { DEFAULT_SETTINGS, type Settings, buildReturn } from './lib/transform';
@@ -11,12 +12,12 @@ import { IssuesPanel } from './components/IssuesPanel';
 import { OutputPreview } from './components/OutputPreview';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoadSummary } from './components/LoadSummary';
-import { SUPPLIER_GSTIN, sampleSheets } from '../scripts/sample-data.mjs';
+import { SUPPLIER_GSTIN, glowsisSheets } from '../scripts/sample-data.mjs';
 
 const SAMPLE_NAME = 'glowsis-sample.xlsx';
 
 function sampleFile() {
-  const grids = sampleSheets as unknown as Record<string, Grid>;
+  const grids = glowsisSheets as unknown as Record<string, Grid>;
   return { name: SAMPLE_NAME, grids, sample: true };
 }
 
@@ -53,7 +54,7 @@ export default function App() {
 
   // The sample belongs to a made-up Kerala supplier; use its GSTIN unless the user entered their own.
   const effective = useMemo(
-    () => (file?.sample && !settings.gstin ? { ...settings, gstin: SUPPLIER_GSTIN, period: settings.period || '2026-09' } : settings),
+    () => (file?.sample && !settings.gstin ? { ...settings, gstin: SUPPLIER_GSTIN, period: settings.period || '2026-08' } : settings),
     [file, settings],
   );
 
@@ -182,7 +183,7 @@ export default function App() {
         </label>
         {file?.sample ? (
           <p className="sample-note">
-            <strong>Showing sample data.</strong> This is a made-up Glowsis export (supplier {SUPPLIER_GSTIN}, September 2026) so you
+            <strong>Showing sample data.</strong> This is a made-up Glowsis export (supplier {SUPPLIER_GSTIN}, August 2026) so you
             can see every step. Choose your own export above to replace it.
           </p>
         ) : (
@@ -245,6 +246,12 @@ export default function App() {
               errors={counts.errors}
               onDownloadReturn={() => download(buildReturnWorkbook(result), `${baseName}${periodTag}_GSTR1.xlsx`)}
               onDownloadAudit={() => download(buildAuditWorkbook(result), `${baseName}${periodTag}_GSTR1_audit.xlsx`)}
+              jsonBlockers={buildGstr1Json(result, effective).blockers}
+              onDownloadJson={async () => {
+                const { json, blockers } = buildGstr1Json(result, effective);
+                if (!json) return blockers.join(' ');
+                return downloadJson(json, `GSTR1_${json.gstin}_${json.fp}.json`);
+              }}
             />
           )}
           </ErrorBoundary>

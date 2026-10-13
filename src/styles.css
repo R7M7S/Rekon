@@ -160,3 +160,4 @@ button:focus-visible, input:focus-visible, select:focus-visible, .drop:focus-wit
 .load-summary p, .load-summary ul { margin: 0; }
 .load-summary ul { padding-left: 18px; }
 .load-summary .muted-item { color: var(--muted); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }

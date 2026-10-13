@@ -1,6 +1,7 @@
 import type { HsnMaster } from '../lib/hsn';
 import { cleanGstin, isValidGstin, posLabel } from '../lib/normalize';
-import type { Settings } from '../lib/transform';
+import { NIL_TYPES, type Settings } from '../lib/transform';
+import { EXEMP_DESCRIPTIONS } from '../lib/gstData';
 
 interface Props {
   settings: Settings;
@@ -57,6 +58,19 @@ export function SettingsPanel({ settings, onChange, master, onMasterFile, onRese
         <label className="check">
           <input type="checkbox" checked={settings.moveSmallB2cl} onChange={(e) => set('moveSmallB2cl', e.target.checked)} />
           <span>Move non-qualifying B2CL invoices (intra-state or under the limit) to B2CS</span>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={settings.zeroRateToNil} onChange={(e) => set('zeroRateToNil', e.target.checked)} />
+          <span>Report 0% invoice lines as nil-rated supplies in Table 8 (not in B2B / B2C)</span>
+        </label>
+        <label>
+          <span>ERP nil sheet total not covered by 0% lines</span>
+          <select value={settings.nilSheetDiff} onChange={(e) => set('nilSheetDiff', e.target.value as Settings['nilSheetDiff'])}>
+            <option value="ignore">Leave out (warn only)</option>
+            {NIL_TYPES.map((t, i) => (
+              <option key={t} value={t}>Add to: {EXEMP_DESCRIPTIONS[i]}</option>
+            ))}
+          </select>
         </label>
       </div>
       <div className="master">

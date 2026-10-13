@@ -74,14 +74,18 @@ export function findHeaderRow(grid: Grid): number {
   return best;
 }
 
+/** Sheets Glowsis exports that are not GSTR-1 data (GSTR-3B summary). */
+const IGNORE_SHEETS = /\b(gst\s*r\s*-?\s*3b?|gstr\s*-?\s*3b?|3b)\b/i;
+
 function sectionFromName(sheet: string): SectionId | null {
   const q = squash(sheet);
+  const tokens = sheet.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   // Longest pattern wins, so "b2cl" beats "b2c" and "hsnb2b" beats "b2b".
   let hit: { id: SectionId; len: number } | null = null;
   for (const s of SECTIONS) {
     for (const p of s.sheetNames) {
       // Short patterns like "at" or "exp" must not match inside unrelated words.
-      const match = q === p || (p.length >= 4 ? q.includes(p) : p.length === 3 && q.startsWith(p));
+      const match = q === p || (p.length >= 4 ? q.includes(p) : p.length === 3 && (q.startsWith(p) || tokens.includes(p)));
       if (match && (!hit || p.length > hit.len)) hit = { id: s.id, len: p.length };
     }
   }
@@ -89,6 +93,7 @@ function sectionFromName(sheet: string): SectionId | null {
 }
 
 export function detectSheet(sheet: string, grid: Grid): SheetMapping {
+  if (IGNORE_SHEETS.test(sheet)) return { sheet, section: null, headerRow: 0, columns: {}, confidence: 0 };
   const headerRow = findHeaderRow(grid);
   const headers = grid[headerRow] ?? [];
   const byName = sectionFromName(sheet);
@@ -100,7 +105,7 @@ export function detectSheet(sheet: string, grid: Grid): SheetMapping {
     if (s.id === byName) q += 0.5;
     if (!best || q > best.q) best = { id: s.id, cols, q };
   }
-  if (!best || best.q < 0.45) {
+  if (!best || best.q < 0.45 || !Object.keys(best.cols).length) {
     return { sheet, section: null, headerRow, columns: {}, confidence: best?.q ?? 0 };
   }
   return { sheet, section: best.id, headerRow, columns: best.cols, confidence: Math.min(1, best.q) };

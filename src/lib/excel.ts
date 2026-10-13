@@ -107,17 +107,16 @@ interface DownloadsApi {
 type ClaudeWindow = { claude?: { use(name: string): Promise<unknown> } };
 
 /**
- * Saves a workbook. Inside the claude.ai artifact viewer, browser downloads are
+ * Saves a file. Inside the claude.ai artifact viewer, browser downloads are
  * blocked, so the viewer's `downloads` capability is used; elsewhere (the
  * standalone HTML file, dev server) a normal browser download is started.
  * Resolves with a short status message for the UI.
  */
-export async function download(wb: XLSX.WorkBook, filename: string): Promise<string> {
+export async function saveFile(data: ArrayBuffer, filename: string, type: string): Promise<string> {
   const host = (window as unknown as ClaudeWindow).claude;
   if (host?.use) {
     const api = (await host.use('downloads').catch(() => null)) as DownloadsApi | null;
     if (!api) return 'Saving files is not available in this view. Open the standalone HTML file instead.';
-    const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true }) as ArrayBuffer;
     try {
       await api.save({ filename, data });
       return `Saved ${filename}`;
@@ -128,6 +127,23 @@ export async function download(wb: XLSX.WorkBook, filename: string): Promise<str
       return `Could not save ${filename} (${code ?? 'unavailable'}).`;
     }
   }
-  XLSX.writeFile(wb, filename, { compression: true });
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
   return `Downloaded ${filename}`;
+}
+
+export function download(wb: XLSX.WorkBook, filename: string): Promise<string> {
+  const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true }) as ArrayBuffer;
+  return saveFile(data, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+export function downloadJson(json: unknown, filename: string): Promise<string> {
+  const data = new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer;
+  return saveFile(data, filename, 'application/json');
 }

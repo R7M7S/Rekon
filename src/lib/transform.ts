@@ -44,7 +44,15 @@ export interface Settings {
   hsnDefaultTab: 'hsn_b2b' | 'hsn_b2c';
   /** Merge B2CL rows that don't qualify (intra-state / small) into B2CS. */
   moveSmallB2cl: boolean;
+  /** Report 0% lines of B2B/B2CL/B2CS as nil-rated supplies in Table 8 instead. */
+  zeroRateToNil: boolean;
+  /** Where to report the ERP nil sheet's total that is not covered by 0% invoice lines. */
+  nilSheetDiff: 'ignore' | NilType;
 }
+
+/** Table 8 rows, in EXEMP_DESCRIPTIONS order, with their GSTR-1 JSON codes. */
+export const NIL_TYPES = ['INTRB2B', 'INTRAB2B', 'INTRB2C', 'INTRAB2C'] as const;
+export type NilType = (typeof NIL_TYPES)[number];
 
 export const DEFAULT_SETTINGS: Settings = {
   gstin: '',
@@ -53,6 +61,8 @@ export const DEFAULT_SETTINGS: Settings = {
   b2clLimit: 100000,
   hsnDefaultTab: 'hsn_b2b',
   moveSmallB2cl: true,
+  zeroRateToNil: true,
+  nilSheetDiff: 'ignore',
 };
 
 export type Severity = 'error' | 'warning' | 'info';
@@ -98,7 +108,7 @@ interface Rec {
 
 type Out = Record<string, string | number>;
 
-const TOTAL_ROW = /^(grand\s*)?(sub\s*)?totals?\b|^summary/i;
+const TOTAL_ROW = /^(grand\s*)?(sub\s*)?totals?\b|^summary|^last\s*row\b/i;
 
 /** Pulls mapped records out of every sheet, grouped by section. */
 export function extractRecords(grids: Record<string, Grid>, mappings: SheetMapping[]) {
@@ -269,8 +279,44 @@ function invoiceRows(ctx: Ctx, sec: string, recs: Rec[], b2b: boolean) {
   return rows;
 }
 
+/**
+ * Works out each invoice's value from its rows. ERPs either repeat the invoice
+ * value on every row, or (Glowsis) give each line's own value. If the largest
+ * row value covers the invoice's taxable value plus tax, it is the repeated
+ * invoice value; otherwise the row values are line values and are added up.
+ */
+function invoiceValues(ctx: Ctx, sec: string, rows: { out: Out; refs: string[] }[]) {
+  const byInv = new Map<string, { out: Out; refs: string[] }[]>();
+  for (const r of rows) {
+    const k = `${r.out.gstin}|${r.out.inum}`;
+    byInv.set(k, [...(byInv.get(k) ?? []), r]);
+  }
+  const values = new Map<string, number>();
+  let summed = 0;
+  for (const [k, list] of byInv) {
+    const vals = list.map((l) => Number(l.out.val) || 0);
+    const gross = list.reduce((s, l) => s + grossOf(Number(l.out.txval), Number(l.out.rate) || 0, Number(l.out.cess)), 0);
+    const max = Math.max(...vals);
+    if (!max) {
+      values.set(k, round2(gross));
+      ctx.change(sec, list[0].refs[0], 'Invoice Value', '', round2(gross), 'Invoice value missing; computed from taxable value + tax');
+    } else if (list.length > 1 && max < gross - 1) {
+      values.set(k, round2(vals.reduce((a, b) => a + b, 0)));
+      summed++;
+    } else {
+      values.set(k, max);
+      if (new Set(vals).size > 1) {
+        ctx.issue('warning', sec, list.map((l) => l.refs[0]).join(', '), `Invoice ${list[0].out.inum} has different invoice values on its rows; using ${max}`);
+      }
+    }
+  }
+  if (summed) ctx.issue('info', sec, '', `${summed} invoice(s) list a value per line; invoice value = sum of its lines`);
+  return values;
+}
+
 /** One row per invoice+rate; invoice value must be the same on all rows of an invoice. */
 function finishInvoices(ctx: Ctx, sec: string, rows: { key: string; out: Out; refs: string[] }[], b2b: boolean) {
+  const invVal = invoiceValues(ctx, sec, rows);
   const merged = aggregate(rows, ['txval', 'cess']);
   if (merged.length < rows.length) {
     ctx.issue('info', sec, '', `${rows.length} line items combined into ${merged.length} invoice/rate rows`);
@@ -283,14 +329,7 @@ function finishInvoices(ctx: Ctx, sec: string, rows: { key: string; out: Out; re
   const numbers = new Map<string, string>();
   for (const [k, list] of byInv) {
     const first = list[0].out;
-    const vals = new Set(list.map((l) => l.out.val));
-    let val = Math.max(...list.map((l) => Number(l.out.val) || 0));
-    if (!val) {
-      val = round2(list.reduce((s, l) => s + grossOf(Number(l.out.txval), Number(l.out.rate) || 0, Number(l.out.cess)), 0));
-      ctx.change(sec, list[0].refs[0], 'Invoice Value', '', val, 'Invoice value missing; computed from taxable value + tax');
-    } else if (vals.size > 1) {
-      ctx.issue('warning', sec, list[0].refs.join(', '), `Invoice ${first.inum} has different invoice values on its rows; using ${val}`);
-    }
+    const val = invVal.get(k) ?? 0;
     const taxable = list.reduce((s, l) => s + Number(l.out.txval), 0);
     if (taxable > val + 1) ctx.issue('warning', sec, list[0].refs[0], `Invoice ${first.inum}: taxable value ${round2(taxable)} exceeds invoice value ${val}`);
     for (const l of list) {
@@ -379,6 +418,7 @@ interface HsnLine {
 
 function hsnLines(ctx: Ctx, bySection: Partial<Record<SectionId, Rec[]>>): HsnLine[] {
   const lines: HsnLine[] = [];
+  const unknownUnits = new Map<string, number>();
   for (const sid of ['hsn', 'hsn_b2b', 'hsn_b2c'] as const) {
     for (const r of bySection[sid] ?? []) {
       const sec = 'hsn';
@@ -390,7 +430,9 @@ function hsnLines(ctx: Ctx, bySection: Partial<Record<SectionId, Rec[]>>): HsnLi
       }
       const rate = ctx.rate(sec, r);
       const raw = typeof r.v.hsn === 'number' ? String(r.v.hsn) : text(r.v.hsn);
-      const txval = ctx.amount(sec, r, 'txval', 'Taxable value');
+      // Negative rows (sales returns) are normal here; they net off when rows are merged.
+      if (!isBlank(r.v.txval) && toNumber(r.v.txval) === null) ctx.issue('error', sec, r.ref, `Taxable value "${text(r.v.txval)}" is not a number`);
+      const txval = num(r.v.txval);
       const iamt = num(r.v.iamt);
       const camt = num(r.v.camt);
       const samt = num(r.v.samt);
@@ -409,12 +451,17 @@ function hsnLines(ctx: Ctx, bySection: Partial<Record<SectionId, Rec[]>>): HsnLi
         if (camt && Math.abs(camt - samt) > 1) ctx.issue('warning', sec, r.ref, `HSN ${raw}: CGST (${camt}) and SGST (${samt}) differ`);
       }
       const uq = uqcCode(r.v.uqc);
-      if (!uq) ctx.issue('warning', sec, r.ref, `Unit "${text(r.v.uqc)}" not recognised; reported as OTH-OTHERS`);
+      if (!uq) unknownUnits.set(text(r.v.uqc), (unknownUnits.get(text(r.v.uqc)) ?? 0) + 1);
       lines.push({
         ref: r.ref, tab, raw, desc: text(r.v.desc), uqc: uq ?? 'OTH', qty: num(r.v.qty), val, txval, iamt, camt, samt, cess,
         rate: rate ?? NaN,
       });
     }
+  }
+  for (const [unit, n] of unknownUnits) {
+    ctx.issue('warning', 'hsn', '', unit
+      ? `${n} HSN row(s) have unit "${unit}", which is not a GST unit (UQC); reported as OTH-OTHERS`
+      : `${n} HSN row(s) have no unit (UQC); reported as OTH-OTHERS. Set units in Glowsis to report them properly`);
   }
   return lines;
 }
@@ -441,7 +488,24 @@ export function buildReturn(
 
   // ---- B2B
   const b2b = finishInvoices(ctx, 'b2b', invoiceRows(ctx, 'b2b', bySection.b2b ?? [], true), true);
-  sheets.b2b = b2b.map((m) => pick(m.out, ['gstin', 'name', 'inum', 'idt', 'val', 'pos', 'rchrg', 'apct', 'invtyp', 'ecom', 'rate', 'txval', 'cess']));
+  // Nil-rated (0%) amounts moved to Table 8, by EXEMP_DESCRIPTIONS index.
+  const nilMoved = [0, 0, 0, 0];
+  let movedB2b = 0;
+  let movedB2c = 0;
+  const isIntra = (pos: string | number) => S === null || String(pos).slice(0, 2) === S;
+  const toNil = (sec: string, m: { out: Out; refs: string[] }, registered: boolean, what: string) => {
+    const idx = (isIntra(m.out.pos) ? 1 : 0) + (registered ? 0 : 2);
+    nilMoved[idx] += Number(m.out.txval) || 0;
+    ctx.change(sec, m.refs.join(', '), 'Section', `${what} @ 0%: ${m.out.txval}`, `Table 8 – ${EXEMP_DESCRIPTIONS[idx]}`, 'Nil-rated supplies are reported in Table 8, not with taxable invoices');
+  };
+  const zero = (m: { out: Out }) => settings.zeroRateToNil && m.out.rate === 0;
+  const b2bKept = b2b.filter((m) => {
+    if (!zero(m) || m.out.invtyp !== 'Regular B2B') return true;
+    toNil('b2b', m, true, `Invoice ${m.out.inum}`);
+    movedB2b += Number(m.out.txval) || 0;
+    return false;
+  });
+  sheets.b2b = b2bKept.map((m) => pick(m.out, ['gstin', 'name', 'inum', 'idt', 'val', 'pos', 'rchrg', 'apct', 'invtyp', 'ecom', 'rate', 'txval', 'cess']));
 
   // ---- B2CL (non-qualifying invoices are moved to B2CS)
   const b2clAll = finishInvoices(ctx, 'b2cl', invoiceRows(ctx, 'b2cl', bySection.b2cl ?? [], false), false);
@@ -462,12 +526,24 @@ export function buildReturn(
       b2cl.push(m);
     }
   }
-  sheets.b2cl = b2cl.map((m) => pick(m.out, ['inum', 'idt', 'val', 'pos', 'apct', 'rate', 'txval', 'cess', 'ecom']));
+  const b2clKept = b2cl.filter((m) => {
+    if (!zero(m)) return true;
+    toNil('b2cl', m, false, `Invoice ${m.out.inum}`);
+    movedB2c += Number(m.out.txval) || 0;
+    return false;
+  });
+  sheets.b2cl = b2clKept.map((m) => pick(m.out, ['inum', 'idt', 'val', 'pos', 'apct', 'rate', 'txval', 'cess', 'ecom']));
 
   // ---- B2CS (aggregated by type, POS, rate)
   const b2cs = aggregate(b2csRows, ['txval', 'cess']);
   if (b2csRows.length > b2cs.length) ctx.issue('info', 'b2cs', '', `${b2csRows.length} B2C rows summarised into ${b2cs.length} POS/rate rows`);
-  sheets.b2cs = b2cs.map((m) => pick(m.out, ['type', 'pos', 'apct', 'rate', 'txval', 'cess', 'ecom']));
+  const b2csKept = b2cs.filter((m) => {
+    if (!zero(m)) return true;
+    toNil('b2cs', m, false, `B2C ${m.out.pos}`);
+    movedB2c += Number(m.out.txval) || 0;
+    return false;
+  });
+  sheets.b2cs = b2csKept.map((m) => pick(m.out, ['type', 'pos', 'apct', 'rate', 'txval', 'cess', 'ecom']));
 
   // ---- CDNR / CDNUR
   const cdnr = noteRows(ctx, 'cdnr', bySection.cdnr ?? []);
@@ -525,6 +601,30 @@ export function buildReturn(
     const t = exempTotals.get(d) ?? [0, 0, 0];
     exempTotals.set(d, [t[0] + num(r.v.nil), t[1] + num(r.v.expt), t[2] + num(r.v.ngsup)]);
   }
+  EXEMP_DESCRIPTIONS.forEach((d, i) => {
+    if (!nilMoved[i]) return;
+    const t = exempTotals.get(d) ?? [0, 0, 0];
+    exempTotals.set(d, [t[0] + nilMoved[i], t[1], t[2]]);
+  });
+
+  // ERP's own nil-rated total (Glowsis "GST Nill" sheet) — compared with Table 8.
+  const nilRecs = bySection.nil_total ?? [];
+  const nilErp = round2(nilRecs.reduce((s, r) => s + num(r.v.txval), 0));
+  const table8 = () => round2([...exempTotals.values()].reduce((s, t) => s + t[0] + t[1] + t[2], 0));
+  const table8Before = table8();
+  if (nilRecs.length) {
+    const diff = round2(nilErp - table8Before);
+    if (Math.abs(diff) > 1) {
+      if (settings.nilSheetDiff !== 'ignore' && diff > 0) {
+        const d = EXEMP_DESCRIPTIONS[NIL_TYPES.indexOf(settings.nilSheetDiff)];
+        const t = exempTotals.get(d) ?? [0, 0, 0];
+        exempTotals.set(d, [t[0] + diff, t[1], t[2]]);
+        ctx.change('exemp', nilRecs.map((r) => r.ref).join(', '), 'Nil Rated Supplies', '', diff, `Difference between the ERP nil sheet (${nilErp}) and 0% invoice lines, added to "${d}" as chosen in Settings`);
+      } else {
+        ctx.issue('warning', 'exemp', nilRecs[0].ref, `ERP nil sheet total ${nilErp} differs from Table 8 (${table8Before}) by ${diff}. If those are nil/exempt sales not listed in the B2B/B2C sheets, choose where to report them in Settings.`);
+      }
+    }
+  }
   sheets.exemp = exempTotals.size ? EXEMP_DESCRIPTIONS.map((d) => [d, ...(exempTotals.get(d) ?? [0, 0, 0]).map(round2)]) : [];
 
   // ---- HSN summary, with invalid HSNs fixed
@@ -568,6 +668,11 @@ export function buildReturn(
   }
   const hsnMerged = aggregate(hsnOut, ['qty', 'val', 'txval', 'iamt', 'camt', 'samt', 'cess']);
   if (hsnOut.length > hsnMerged.length) ctx.issue('info', 'hsn', '', `${hsnOut.length} HSN rows merged into ${hsnMerged.length} rows (same HSN, unit and rate)`);
+  for (const m of hsnMerged) {
+    if (Number(m.out.txval) < 0) {
+      ctx.issue('warning', 'hsn', m.refs.join(', '), `HSN ${m.out.hsn} at ${m.out.rate}% (${m.out.uqc}) is negative after netting returns (${m.out.txval}). The portal may reject negative HSN values; report those returns as credit notes or adjust them against another HSN row.`);
+    }
+  }
   for (const tab of ['hsn_b2b', 'hsn_b2c'] as const) {
     sheets[tab] = hsnMerged
       .filter((m) => m.out.tab === tab)
@@ -579,7 +684,9 @@ export function buildReturn(
   }
 
   // ---- Documents issued
-  sheets.docs = (bySection.docs ?? []).map((r) => {
+  // Glowsis lists every document type, including ones with no series this month.
+  const docRecs = (bySection.docs ?? []).filter((r) => !(isBlank(r.v.from) && isBlank(r.v.to) && !num(r.v.totnum)));
+  sheets.docs = docRecs.map((r) => {
     const sec = 'docs';
     const nature = docNature(r.v.doc_typ);
     if (!nature) ctx.issue('error', sec, r.ref, `Nature of document "${text(r.v.doc_typ)}" not recognised`);
@@ -605,8 +712,9 @@ export function buildReturn(
   const srcHsn = round2(lines.reduce((s, l) => s + l.txval, 0));
   const outHsnB2b = sum(sheets.hsn_b2b, 5);
   const outHsnB2c = sum(sheets.hsn_b2c, 5);
-  const b2bTx = sum(sheets.b2b, 11);
-  const b2cTx = round2(sum(sheets.b2cl, 6) + sum(sheets.b2cs, 4));
+  // Include 0% lines moved to Table 8: they are still part of the HSN summary.
+  const b2bTx = round2(sum(sheets.b2b, 11) + movedB2b);
+  const b2cTx = round2(sum(sheets.b2cl, 6) + sum(sheets.b2cs, 4) + movedB2c);
   const expTx = sum(sheets.exp, 8);
   const cdn = (rows: (string | number)[][], typeCol: number, txCol: number) =>
     round2(rows.reduce((s, r) => s + (r[typeCol] === 'D' ? 1 : r[typeCol] === 'C' ? -1 : 0) * (Number(r[txCol]) || 0), 0));
@@ -617,6 +725,9 @@ export function buildReturn(
     { label: 'Invoices (B2B + B2C + Export) vs HSN', leftLabel: 'Invoices', rightLabel: 'HSN', left: round2(b2bTx + b2cTx + expTx), right: round2(outHsnB2b + outHsnB2c) },
     { label: 'Invoices net of credit/debit notes vs HSN', leftLabel: 'Invoices ± notes', rightLabel: 'HSN', left: round2(b2bTx + b2cTx + expTx + cdnrNet + cdnurNet), right: round2(outHsnB2b + outHsnB2c) },
   ];
+  if (nilRecs.length) {
+    recon.push({ label: 'ERP nil sheet vs Table 8 (nil + exempt + non-GST)', leftLabel: 'ERP', rightLabel: 'Table 8', left: nilErp, right: table8() });
+  }
   if (sheets.hsn_b2b.length && sheets.hsn_b2c.length) {
     recon.push({ label: 'B2B invoices ± CDNR vs HSN (B2B)', leftLabel: 'B2B', rightLabel: 'HSN B2B', left: round2(b2bTx + cdnrNet), right: outHsnB2b });
     recon.push({ label: 'B2C + Export ± CDNUR vs HSN (B2C)', leftLabel: 'B2C', rightLabel: 'HSN B2C', left: round2(b2cTx + expTx + cdnurNet), right: outHsnB2c });
