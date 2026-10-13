@@ -1,0 +1,64 @@
+import { useState } from 'react';
+import { OUTPUT_SHEETS } from '../lib/schema';
+import type { Result } from '../lib/transform';
+
+interface Props {
+  result: Result;
+  errors: number;
+  onDownloadReturn: () => void;
+  onDownloadAudit: () => void;
+}
+
+export function OutputPreview({ result, errors, onDownloadReturn, onDownloadAudit }: Props) {
+  const keys = Object.keys(OUTPUT_SHEETS).filter((k) => result.sheets[k]?.length);
+  const [sel, setSel] = useState(keys[0] ?? '');
+  const active = keys.includes(sel) ? sel : keys[0];
+  const def = active ? OUTPUT_SHEETS[active] : null;
+  const rows = active ? result.sheets[active] : [];
+
+  return (
+    <div className="stack">
+      <section className="card actions">
+        <div>
+          <button className="primary" onClick={onDownloadReturn}>Download GSTR-1 workbook</button>
+          <button onClick={onDownloadAudit}>Download audit report</button>
+        </div>
+        {errors > 0 ? (
+          <p className="err">
+            {errors} error(s) remain — the offline tool will reject those rows. Fix them in Glowsis or in the Validation tab first.
+          </p>
+        ) : (
+          <p className="ok">No blocking errors. Import the workbook in the GSTR-1 offline tool → validate → generate JSON.</p>
+        )}
+      </section>
+
+      <nav className="subtabs">
+        {keys.map((k) => (
+          <button key={k} className={k === active ? 'on' : ''} onClick={() => setSel(k)}>
+            {OUTPUT_SHEETS[k].name} ({result.sheets[k].length})
+          </button>
+        ))}
+      </nav>
+
+      {def && (
+        <section className="card table-wrap">
+          <table>
+            <thead>
+              <tr>{def.headers.map((h) => <th key={h}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 500).map((r, i) => (
+                <tr key={i}>
+                  {r.map((c, j) => (
+                    <td key={j} className={typeof c === 'number' ? 'num' : ''}>{c}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {rows.length > 500 && <p className="hint small">Showing first 500 of {rows.length} rows; the download contains all.</p>}
+        </section>
+      )}
+    </div>
+  );
+}
