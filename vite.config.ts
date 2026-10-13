@@ -8,5 +8,7 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 export default defineConfig({
   plugins: [react(), viteSingleFile()],
   base: './',
+  // ASCII-only output, so the single-file build works however the page's encoding is declared.
+  esbuild: { charset: 'ascii' },
   test: { environment: 'node' },
 });

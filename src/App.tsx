@@ -10,6 +10,7 @@ import { HsnReview } from './components/HsnReview';
 import { IssuesPanel } from './components/IssuesPanel';
 import { OutputPreview } from './components/OutputPreview';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { LoadSummary } from './components/LoadSummary';
 import { SUPPLIER_GSTIN, sampleSheets } from '../scripts/sample-data.mjs';
 
 const SAMPLE_NAME = 'glowsis-sample.xlsx';
@@ -185,7 +186,12 @@ export default function App() {
             can see every step. Choose your own export above to replace it.
           </p>
         ) : (
-          <button className="link" onClick={loadSample}>Load the sample export</button>
+          file && (
+            <>
+              <LoadSummary name={file.name} grids={file.grids} mappings={mappings} onOpenSheets={() => setTab('sheets')} />
+              <button className="link" onClick={loadSample}>Load the sample export</button>
+            </>
+          )
         )}
         {error && <p className="err" role="alert">{error}</p>}
         {convertError && (

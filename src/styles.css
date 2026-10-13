@@ -155,3 +155,8 @@ tr.row-bad td { background: var(--bad-bg); }
 button:focus-visible, input:focus-visible, select:focus-visible, .drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .app { padding-inline: 16px; padding-block: 20px 40px; }
 .drop.dragging { border-color: var(--accent); background: var(--chip); }
+.load-summary { margin: 12px 0 10px; padding: 10px 12px; border-radius: 8px; background: var(--ok-bg); display: grid; gap: 6px; }
+.load-summary.bad { background: var(--bad-bg); }
+.load-summary p, .load-summary ul { margin: 0; }
+.load-summary ul { padding-left: 18px; }
+.load-summary .muted-item { color: var(--muted); }
