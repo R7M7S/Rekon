@@ -9,6 +9,7 @@ import { SheetMapper } from './components/SheetMapper';
 import { HsnReview } from './components/HsnReview';
 import { IssuesPanel } from './components/IssuesPanel';
 import { OutputPreview } from './components/OutputPreview';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { SUPPLIER_GSTIN, sampleSheets } from '../scripts/sample-data.mjs';
 
 const SAMPLE_NAME = 'glowsis-sample.xlsx';
@@ -55,10 +56,17 @@ export default function App() {
     [file, settings],
   );
 
-  const result = useMemo(
-    () => (file ? buildReturn(file.grids, mappings, effective, master, overrides) : null),
-    [file, mappings, effective, master, overrides],
-  );
+  // A conversion bug on unexpected data must show a message, not blank the page.
+  const { result, convertError } = useMemo(() => {
+    if (!file) return { result: null, convertError: '' };
+    try {
+      return { result: buildReturn(file.grids, mappings, effective, master, overrides), convertError: '' };
+    } catch (e) {
+      console.error(e);
+      return { result: null, convertError: (e as Error).message || String(e) };
+    }
+  }, [file, mappings, effective, master, overrides]);
+  const [dragging, setDragging] = useState(false);
 
   function loadSample() {
     const f = sampleFile();
@@ -72,13 +80,22 @@ export default function App() {
     setBusy(true);
     setError('');
     try {
-      const { names, grids } = readWorkbook(await f.arrayBuffer());
+      const buf = await f.arrayBuffer();
+      // Let the "Reading…" state paint before the synchronous parse blocks the page.
+      await new Promise((r) => setTimeout(r, 30));
+      const { names, grids } = readWorkbook(buf);
+      if (!names.length) throw new Error('the file has no sheets');
       setFile({ name: f.name, grids });
       setMappings(names.map((n) => detectSheet(n, grids[n])));
       setOverrides({});
       setTab('sheets');
     } catch (e) {
-      setError(`Could not read "${f.name}": ${(e as Error).message}`);
+      const msg = (e as Error).message || String(e);
+      setError(
+        /password|encrypt/i.test(msg)
+          ? `"${f.name}" is password-protected. Save it from Excel without a password and try again.`
+          : `Could not read "${f.name}": ${msg}. Open it in Excel, use Save As → Excel Workbook (.xlsx), and try again.`,
+      );
     } finally {
       setBusy(false);
     }
@@ -131,19 +148,35 @@ export default function App() {
       />
 
       <section className="card upload">
-        <label className={`drop ${busy ? 'busy' : ''}`}>
+        <label
+          className={`drop ${busy ? 'busy' : ''} ${dragging ? 'dragging' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            const f = e.dataTransfer.files?.[0];
+            if (f) onFile(f);
+          }}
+        >
           <input
+            id="export-file"
             type="file"
-            accept=".xlsx,.xls,.xlsm,.csv"
+            accept=".xlsx,.xls,.xlsm,.xlsb,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12,text/csv"
             onChange={(e) => {
               const f = e.target.files?.[0];
               e.target.value = '';
               if (f) onFile(f);
             }}
           />
-          <strong>{file && !file.sample ? file.name : 'Choose the Glowsis GST export (.xlsx / .xls)'}</strong>
+          <strong>
+            {busy ? 'Reading file…' : file && !file.sample ? file.name : 'Click to choose the Glowsis GST export, or drop it here'}
+          </strong>
           <span>
-            {file && !file.sample ? `${mappings.length} sheets · click to load another file` : 'All sheets are read and recognised automatically'}
+            {file && !file.sample ? `${mappings.length} sheets · click to load another file` : 'Excel (.xlsx, .xls) or CSV · all sheets are recognised automatically'}
           </span>
         </label>
         {file?.sample ? (
@@ -154,7 +187,13 @@ export default function App() {
         ) : (
           <button className="link" onClick={loadSample}>Load the sample export</button>
         )}
-        {error && <p className="err">{error}</p>}
+        {error && <p className="err" role="alert">{error}</p>}
+        {convertError && (
+          <p className="err" role="alert">
+            The file was read, but converting it failed: {convertError}. Check the Sheets tab mapping, or send this message to
+            whoever maintains the app.
+          </p>
+        )}
       </section>
 
       {result && counts && (
@@ -177,6 +216,7 @@ export default function App() {
             </button>
           </nav>
 
+          <ErrorBoundary resetKey={`${tab}|${file?.name}`}>
           {tab === 'sheets' && file && <SheetMapper grids={file.grids} mappings={mappings} onChange={setMappings} />}
           {tab === 'hsn' && (
             <HsnReview
@@ -201,8 +241,10 @@ export default function App() {
               onDownloadAudit={() => download(buildAuditWorkbook(result), `${baseName}${periodTag}_GSTR1_audit.xlsx`)}
             />
           )}
+          </ErrorBoundary>
         </>
       )}
+      {file && !result && <SheetMapper grids={file.grids} mappings={mappings} onChange={setMappings} />}
 
       <footer className="foot">
         Output follows the GSTR-1 offline tool Excel template (sheet names and column headers). Import it in the offline tool,

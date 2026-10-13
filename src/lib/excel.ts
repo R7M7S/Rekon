@@ -3,14 +3,36 @@ import type { Grid } from './detect';
 import { OUTPUT_SHEETS } from './schema';
 import type { Result } from './transform';
 
+/**
+ * ERP exports often declare a used range far beyond the data (e.g. A1:Z1048576
+ * because whole columns are formatted). Reading that range builds a million
+ * empty rows and freezes the browser, so shrink it to the cells that hold values.
+ */
+export function trimRange(ws: XLSX.WorkSheet) {
+  let maxR = -1;
+  let maxC = -1;
+  for (const addr of Object.keys(ws)) {
+    if (addr[0] === '!') continue;
+    const cell = ws[addr] as XLSX.CellObject;
+    if (cell.v === undefined || cell.v === null || cell.v === '') continue;
+    const { r, c } = XLSX.utils.decode_cell(addr);
+    if (r > maxR) maxR = r;
+    if (c > maxC) maxC = c;
+  }
+  ws['!ref'] = maxR < 0 ? 'A1:A1' : XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+}
+
 /** Reads every sheet as a raw grid (numbers stay numbers; dates stay Excel serials). */
 export function readWorkbook(data: ArrayBuffer): { names: string[]; grids: Record<string, Grid> } {
   const wb = XLSX.read(data, { type: 'array', cellDates: false, raw: false });
   const grids: Record<string, Grid> = {};
   for (const name of wb.SheetNames) {
-    grids[name] = XLSX.utils.sheet_to_json<Grid[number]>(wb.Sheets[name], { header: 1, raw: true, defval: null, blankrows: true });
+    const ws = wb.Sheets[name];
+    if (!ws) continue;
+    trimRange(ws);
+    grids[name] = XLSX.utils.sheet_to_json<Grid[number]>(ws, { header: 1, raw: true, defval: null, blankrows: true });
   }
-  return { names: wb.SheetNames, grids };
+  return { names: wb.SheetNames.filter((n) => grids[n]), grids };
 }
 
 /** Reads the GST portal HSN master (HSN_SAC.xlsx) or any sheet/CSV whose first column holds codes. */
